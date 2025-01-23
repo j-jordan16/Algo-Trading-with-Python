@@ -1,0 +1,187 @@
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.io as pio
+import os
+from IPython.display import IFrame, display
+
+# load the excel file
+df = pd.read_csv('data_1.csv')
+
+#convert the datetime column to datetime type, acounting for timezone
+df['time'] = pd.to_datetime(df['time'], utc=True)
+
+#convert to local timezone if needed
+df['time'] = df['time'] = df['time'].dt.tz_convert('America/New_York')
+
+#Extract Date and Time
+df['date'] = df['time'].dt.date
+df['time only'] = df ['time'].dt.time 
+
+# Filter data for the pre-market time range
+premarket_df = df[(df['time only']>= pd.to_datetime('09:00:00').time()) & (df['time only'] <= pd.to_datetime('09:29:59').time())]
+
+#Group by date and calculate high/low for each date
+premarket_summary = premarket_df.groupby('date').agg(premarket_high=('high','max'),premarket_low=('low', 'min')).reset_index()
+
+#add the times corresponding to the high and low prices
+premarket_summary['premarket_high_time'] = premarket_df.loc[premarket_df.groupby('date')['high'].idxmax(), 'time only'].values
+premarket_summary['premarket_low_time'] = premarket_df.loc[premarket_df.groupby('date')['low'].idxmin(), 'time only'].values
+
+#calculate the absolute delta
+premarket_summary['premarket_range'] = premarket_summary['premarket_high'] - premarket_summary['premarket_low']
+
+#Calculate the standard deviations for the 1/8th increments
+std = [0.125, 0.25, 0.375, 0.5]
+
+def round_25(series):
+    # Check if the series is already a 0.25 increment
+    is_increment = (series % 0.25 == 0)
+    # Round up only if not already a 0.25 increment
+    return np.where(is_increment, series, np.ceil(series * 4) / 4)
+
+# calculate the standard deviations of the open
+for increment in std:
+    premarket_summary[f'premarket_range_+std_{increment}'] = round_25((premarket_summary['premarket_high']) + (premarket_summary['premarket_range'] * increment)).round(2)
+    premarket_summary[f'premarket_range_-std_{increment}'] = round_25((premarket_summary['premarket_low']) - (premarket_summary['premarket_range'] * increment)).round(2)
+# ensure plotly is configured to display using 'iframe' renderer
+pio.renderers.default = 'iframe'
+
+# filter data for the time range 09:00:00 - 10:29:59
+filtered_df = df[(df['time only'] >= pd.to_datetime('09:00:00').time()) & (df['time only'] <= pd.to_datetime('10:29:59').time())]
+
+# get the unique dates
+unique_dates = filtered_df['date'].unique()
+
+# define the directory to save the HTML files
+save_dir = r'D:\Python_Projects\Nasdaq Premarket Analysis\html images 1'
+
+# ensure the directory exists
+os.makedirs(save_dir, exist_ok=True)
+
+#check if there are any dates to plot
+if len(unique_dates) == 0:
+    print("No data available for the specified time range.")
+else: 
+    # create individual figures for each day
+    for date in unique_dates:
+        day_df = filtered_df[filtered_df['date'] == date]
+            
+        # calculate the y-axis range for the day
+        y_min = day_df['low'].min()*0.99
+        y_max = day_df['high'].max()*1.01
+
+        # get the pre-calculated high and low values for the opening range
+        premarket_range_high = premarket_summary.loc[premarket_summary['date'] == date, 'premarket_high'].values[0]
+        premarket_range_low = premarket_summary.loc[premarket_summary['date'] == date, 'premarket_low'].values[0]
+        premarket_range = premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range'].values[0]
+
+        #calculate the center of the box for the annotation
+        box_center_x = pd.to_datetime(f'{date} 09:00:00') + (pd.to_datetime(f'{date} 09:29:59') - pd.to_datetime(f'{date} 09:00:00'))/2
+        box_center_y = premarket_range_high + (y_max - y_min) * 0.02
+
+        #calculate the positions of the standard deviation lines
+        std_dev_lines = [
+            premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_+std_0.125'].values[0]
+        ]
+        
+        #create a new figure for each day
+        fig = go.Figure()
+        fig.add_trace(
+            go.Candlestick(x=day_df['time'],
+            open=day_df['open'],
+            high=day_df['high'],
+            low=day_df['low'],
+            close=day_df['close'],
+            name=str(date),
+            increasing_line_color='#000000',
+            increasing_fillcolor='#66bb6a',
+            increasing_line_width=1,
+            decreasing_line_color='#000000',
+            decreasing_fillcolor='#000000',
+            decreasing_line_width=1
+        ))
+
+        # update layout for the indiviual figure
+        fig.update_layout(
+            title=f'{date} <br>09:00 - 10:30',
+            xaxis_title='time',
+            yaxis_title='Price',
+            height=600,
+            showlegend=False,
+            plot_bgcolor='#d0d4de',
+            paper_bgcolor='#d0d4de',
+            shapes=[
+                #border around the chart
+                dict(
+                    type="rect",
+                    xref="paper",
+                    yref="paper",
+                    x0=0,
+                    y0=0,
+                    x1=1,
+                    y1=1,
+                    line=dict(
+                        color="Black",
+                        width=1
+                    )
+                ),
+                #box around the premarket range high and low
+                dict(
+                    type="rect",
+                    xref="x",
+                    yref="y",
+                    x0=pd.to_datetime(f'{date} 09:00:00'),
+                    y0=premarket_range_low,
+                    x1=pd.to_datetime(f'{date} 09:29:59'),
+                    y1=premarket_range_high,
+                    line=dict(
+                        color="Red",
+                        width=0
+                    ),
+                    fillcolor="rgba(242, 54, 69, 0.1)"
+                ),
+                # Standard Deviation Lines
+                dict(
+                    type="line",
+                    xref="x",
+                    yref="y",
+                    x0=pd.to_datetime(f'{date} 09:00:00'),
+                    y0=std_dev_lines,
+                    x1=pd.to_datetime(f'{date} 09:29:59'),
+                    y1=std_dev_lines,
+                    line=dict(
+                        color="Red",
+                        width=1
+                    )
+                )
+            ],
+            annotations=[
+                #text annotation for the premarket range
+                dict(
+                    x=box_center_x,
+                    y=premarket_range_high + (y_max - y_min)*0.02, # slightly above the box
+                    xref="x",
+                    yref="y",
+                    text=f'Premarket Range: <BR> {premarket_range: .2f} pts',
+                    showarrow=False,
+                    font=dict(
+                        size=12,
+                        color="black"
+                    ),
+                    align="center"
+                )
+            ],
+            dragmode='zoom', 
+        )
+
+        # update x-axis and y-axis properties
+        fig.update_xaxes(showgrid=False, rangeslider=dict(visible=False))
+        fig.update_yaxes(showgrid=False, range=[y_min, y_max], tickformat=',.2f', fixedrange=False)
+        
+        #save the individual plot as an HTML file
+        file_path = os.path.join(save_dir, f'candlestick_chart_{date}.html')
+        fig.write_html(file_path)
+
+        #display the individual plot in Jupyter Notebook wihtout the modebar
+        display(IFrame(src=file_path, width='100%', height=700))
