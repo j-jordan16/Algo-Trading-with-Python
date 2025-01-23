@@ -1,7 +1,7 @@
 Trade Purpose:
 Reversal trading strategy taking advantage of the premarket liquidity pool (09:00 - 09:30). 
 In this trade we sell at the highest high of the premarket liqudity pool or buy at the lowest low of the premarket liquidity pool.
-Out stop loss is predefined by using standard deviations of the premarket range with 0.5 above or below the sell or buy as the stop loss. 
+The stop loss is predefined by using standard deviations of the premarket range with 0.5 above or below the sell or buy as the stop loss. 
 The take profit target objective is the opposing liquidity pool of the premarket range.
 
 Requirements for code:
