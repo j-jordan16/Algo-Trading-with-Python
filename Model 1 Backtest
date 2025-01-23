@@ -32,7 +32,7 @@ premarket_summary['premarket_low_time'] = premarket_df.loc[premarket_df.groupby(
 premarket_summary['premarket_range'] = premarket_summary['premarket_high'] - premarket_summary['premarket_low']
 
 #Calculate the standard deviations for the 1/8th increments
-std = [0.125, 0.25, 0.375, 0.5]
+std = [0.0, 0.125, 0.25, 0.375, 0.5]
 
 def round_25(series):
     # Check if the series is already a 0.25 increment
@@ -80,11 +80,87 @@ else:
         box_center_x = pd.to_datetime(f'{date} 09:00:00') + (pd.to_datetime(f'{date} 09:29:59') - pd.to_datetime(f'{date} 09:00:00'))/2
         box_center_y = premarket_range_high + (y_max - y_min) * 0.02
 
-        #calculate the positions of the standard deviation lines
-        std_dev_lines = [
-            premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_+std_0.125'].values[0]
-        ]
+        #track the time of premarket high and low formation
+        premarket_high_time = None
+        premarekt_low_time = None
+
+        for i, row in day_df.iterrows():
+            if row['time only'] <= pd.to_datetime('09:14:59').time():
+                if row['high'] == premarket_range_high:
+                    premarket_high_time = row['time']
+                if row['low'] == premarket_range_low:
+                    premarket_low_time = row['time']
+
+        #identify breaches and calculate trade details
+        trade = "No"
+        trade_action = None
+        entry_price = None
+        stop_loss_price = None
+        take_profit_price = None
+
+        for i, row in day_df.iterrows():
+            if row['time only'] <= pd.to_datetime('09:44:59').time():
+                if row['high'] > premarket_range_high:
+                    trade = "Yes"
+                    trade_action = "Sell"
+                    entry_price = premarket_range_high
+                    stop_loss_price = premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_+std_0.5'].values[0]
+                    take_profit_price = premarket_range_low
+                    break
+                elif row['low'] < premarket_range_low:
+                    trade = "Yes"
+                    trade_action = "Buy"
+                    entry_price = premarket_range_low
+                    stop_loss_price = premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_-std_0.5'].values[0]
+                    take_profit_price = premarket_range_high
+                    break
         
+        if trade == "Yes":
+                #start monitoring for the breach time onwards
+                breach_time = row['time'] #record the breach time
+                for j, row in day_df.iterrows():
+                    if row['time'] > breach_time: #only consider times after the breach
+                        if trade_action == "Sell":
+                            if row['low'] <= take_profit_price:
+                                trade_result = "WIN"
+                                break
+                            elif row['high'] >= stop_loss_price:
+                                trade_result = "LOSS"
+                                break
+                        elif trade_action == "Buy":
+                            if row['high'] >= take_profit_price:
+                                trade_result = "WIN"
+                                break
+                            elif row['low'] <= stop_loss_price:
+                                trade_result = "LOSS"
+                                break
+
+        #determine the standard deviation lines to display based on the trade action
+        if trade_action == "Sell":
+            std_dev_lines_to_display = [
+                premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_+std_0.5'].values[0],
+                premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_+std_0.0'].values[0],
+                premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_-std_0.0'].values[0]
+            ]
+        elif trade_action == "Buy":
+            std_dev_lines_to_display = [
+                premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_-std_0.5'].values[0],
+                premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_-std_0.0'].values[0],
+                premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_+std_0.0'].values[0]
+            ]
+        
+        #rounding risk to nearest quarter
+        def round_up_to_nearest_quarter(x):
+            return np.ceil(x*4)/4
+
+        #calculate the risk and reward
+        risked = round_up_to_nearest_quarter(premarket_range /2)
+        risk = premarket_range/2
+        reward = premarket_range
+
+        #format the risk to reward ratio as a string
+        risk_to_reward = f'{int(risk/risk)}:{int(reward/risk)}'
+                
         #create a new figure for each day
         fig = go.Figure()
         fig.add_trace(
@@ -100,13 +176,15 @@ else:
             decreasing_line_color='#000000',
             decreasing_fillcolor='#000000',
             decreasing_line_width=1
-        ))
+            )
+        )
 
         # update layout for the indiviual figure
         fig.update_layout(
             title=f'{date} <br>09:00 - 10:30',
             xaxis_title='time',
             yaxis_title='Price',
+            autosize = True, #automatically adjust size
             height=600,
             showlegend=False,
             plot_bgcolor='#d0d4de',
@@ -140,21 +218,25 @@ else:
                         width=0
                     ),
                     fillcolor="rgba(242, 54, 69, 0.1)"
-                ),
+                )
+            ] + [
                 # Standard Deviation Lines
                 dict(
                     type="line",
                     xref="x",
                     yref="y",
-                    x0=pd.to_datetime(f'{date} 09:00:00'),
-                    y0=std_dev_lines,
-                    x1=pd.to_datetime(f'{date} 09:29:59'),
-                    y1=std_dev_lines,
+                    x0=pd.to_datetime(f'{date} 09:30:00'),
+                    y0=std_dev_line,
+                    x1=pd.to_datetime(f'{date} 09:44:59'),
+                    y1=std_dev_line,
                     line=dict(
-                        color="Red",
+                        color="#801922" if std_dev_line in [
+                            premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_+std_0.0'].values[0],
+                            premarket_summary.loc[premarket_summary['date'] == date, 'premarket_range_-std_0.0'].values[0],
+                        ] else "Red",
                         width=1
                     )
-                )
+                ) for std_dev_line in std_dev_lines_to_display
             ],
             annotations=[
                 #text annotation for the premarket range
@@ -170,14 +252,108 @@ else:
                         color="black"
                     ),
                     align="center"
-                )
-            ],
+                ),
+                #text annotation for trade details
+                dict(
+                    x=0.9,
+                    y=1.2,
+                    xref="paper",
+                    yref="paper",
+                    text=f' Trade: {trade} ({trade_result}) <br> Entry ({trade_action}): {entry_price:,.2f} <br> Stop Loss: {stop_loss_price:,.2f}  <br> Take Profit: {take_profit_price:,.2f} <br> Risk to Reward: {risk_to_reward} ({risked:.2f} : {reward:.2f})',
+                    showarrow = False,
+                    font = dict(
+                        size = 12,
+                        color = "Black"
+                    ),
+                    align = "left"
+            )
+            ] + (
+                [
+                    #text annotation for Buy/Sell
+                    dict(
+                        x=pd.to_datetime(f'{date} 09:28:00'),
+                        y=premarket_range_high + (y_max - y_min)*0.005 if trade_action == "Sell" else premarket_range_low - (y_max - y_min)*0.005,
+                        xref = "x",
+                        yref="y",
+                        text=f'{trade_action}',
+                        showarrow=False,
+                        font=dict(
+                            size=12,
+                            color="Black"
+                        ),
+                        align="left"
+                    ),
+                    #text annotation for stop loss
+                    dict(
+                        x=pd.to_datetime(f'{date} 09:27:00'),
+                        y=stop_loss_price + (y_max - y_min)*0.005 if trade_action == "Sell" else stop_loss_price - (y_max - y_min)*0.005,
+                        xref = "x",
+                        yref = "y",
+                        text = 'Stop Loss',
+                        showarrow = False,
+                        font = dict(
+                            size=12,
+                            color="Black"
+                        ),
+                        align="left"
+                    ),
+                    #Text annotation for take profit
+                    dict(
+                        x=pd.to_datetime(f'{date} 09:27:00'),
+                        y=premarket_range_low - (y_max - y_min) *0.005 if trade_action =="Sell" else premarket_range_high + (y_max-y_min)*0.005,
+                        xref="x",
+                        yref="y",
+                        text='Take Profit',
+                        showarrow=False,
+                        font=dict(
+                            size =12,
+                            color="Black"
+                        ),
+                        align="left"
+                    )  
+                ] if trade == "Yes" else []
+            ),
             dragmode='zoom', 
         )
 
+        #add annotation for the time premarket high or low formation if there is a win trade
+        if trade_result == "WIN":
+            if trade_action == "Sell" and premarket_high_time:
+                fig.add_annotation(
+                    dict(
+                        x=pd.to_datetime(f'{date} 09:45:00'),
+                        y=premarket_range_high + (y_max - y_min) * 0.005,
+                        xref="x",
+                        yref="y",
+                        text=f'{premarket_high_time.strftime("%H:%M")}',
+                        showarrow=False,
+                        font=dict(
+                            size=12,
+                            color="Black"
+                        ),
+                        align="left"
+                    )
+                )
+            elif trade_action == "Buy" and premarket_low_time:
+                fig.add_annotation(
+                    dict(
+                        x=pd.to_datetime(f'{date} 09:45:00'),
+                        y=premarket_range_low - (y_max - y_min) * 0.005,
+                        xref="x",
+                        yref="y",
+                        text=f'{premarket_low_time.strftime("%H:%M")}',
+                        showarrow=False,
+                        font=dict(
+                            size=12,
+                            color="Black"
+                        ),
+                        align="left"
+                    )
+                )
+                        
         # update x-axis and y-axis properties
         fig.update_xaxes(showgrid=False, rangeslider=dict(visible=False))
-        fig.update_yaxes(showgrid=False, range=[y_min, y_max], tickformat=',.2f', fixedrange=False)
+        fig.update_yaxes(showgrid=False, autorange=True, tickformat=',.2f', fixedrange=False)
         
         #save the individual plot as an HTML file
         file_path = os.path.join(save_dir, f'candlestick_chart_{date}.html')
